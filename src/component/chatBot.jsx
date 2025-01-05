@@ -1,13 +1,21 @@
 import React, { useEffect, useState } from "react";
 import "./chatBox.css";
 import axios from "axios";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import "@fortawesome/fontawesome-free/css/all.min.css";
+const serverUrl = import.meta.env.VITE_SERVER_URL;
 
-const ChatApp = ({ chatId }) => {
+const ChatApp = () => {
+  const location = useLocation();
+  const { loggedInUser, allUsers, userId } = location.state || {};
+ console.log(loggedInUser)
+ console.log(allUsers)
+ console.log(userId)
   const [inputValue, setInputValue] = useState('');
   const [receiverValue, setReceiverValue] = useState('');
   const [fileBase, setFileBase] = useState(null);
+  const [senderData, setSenderData] = useState(null);
+  const [receiverData, setReceiverData] = useState(null);
   const navigate = useNavigate();
   const handleBackToLogin = () => {
     navigate("/login");
@@ -91,6 +99,8 @@ const ChatApp = ({ chatId }) => {
   }
   const formData = {
     message,
+    senderId: loggedInUser.id,
+    receiverId: userId, 
     file: (fileBase && fileBase.type && fileBase.name && fileBases) ? {
         type: fileBase.type,
         name: fileBase.name,
@@ -98,7 +108,7 @@ const ChatApp = ({ chatId }) => {
     } : null, 
 };
     try {
-      await axios.post('http://localhost:3001/send-message', formData, {
+      await axios.post(`${serverUrl}/send-message`, formData, {
         headers: {
           'Content-Type': 'application/json',
         },
@@ -112,21 +122,19 @@ const ChatApp = ({ chatId }) => {
     }
   };
   // Fetch chat data from sender
-  async function fetchEmployeeData(status) {
+  async function fetchEmployeeData() {
+    const senderID = loggedInUser.id;
+    const receiverID = userId; 
     try {
-      const response = await axios.get("http://localhost:3001/read-all");
-      if (response && typeof response === 'object') {
-        const chatBodySender = document.querySelector('.chat-body-sender');
-        if (chatBodySender) chatBodySender.innerHTML = ''; 
-        rowMap.clear();
-        Object.entries(response.data).forEach(([key, sender]) => {
-          if(status === true){
-          showData({ ...sender, id: key });
-          } else {
-            showData({...sender, id: key },false);
-          }
-        });
-      }
+      const response = await axios.get(`${serverUrl}/get-messages`, {
+        params: { senderID, receiverID },
+      });
+  
+      const chatBodySender = document.querySelector('.chat-body-sender');
+      if (chatBodySender) chatBodySender.innerHTML = '';
+      rowMap.clear();
+      console.log(response.data);
+      setSenderData(response.data);
     } catch (error) {
       console.error("Fetch error:", error.message);
     }
@@ -136,24 +144,24 @@ const ChatApp = ({ chatId }) => {
   useEffect(() => {
     let ws;
     const connectWebSocket = () => {
-      ws = new WebSocket('ws://localhost:3001');
+      ws = new WebSocket(`ws://localhost:3001`);
       ws.onopen = () => {
         console.log('Connected to WebSocket server');
       };
-
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
         if (data) {
           const chatBodySender = document.querySelector('.chat-body-sender');
           if (chatBodySender) chatBodySender.innerHTML = ''; 
           rowMap.clear();
-          Object.entries(data).forEach(([key, sender]) => {
-            showData({ ...sender, id: key },true);
-            console.log({ ...sender, id: key });
-          });
+          const dataArray = Object.entries(data).map(([key, value]) => ({
+            id: key,
+            ...value
+          }));
+          setReceiverData(dataArray);
+          console.log(dataArray);
         }
       };
-
       ws.onclose = () => {
         console.log('Disconnected from WebSocket server');
       };
@@ -162,9 +170,8 @@ const ChatApp = ({ chatId }) => {
         ws.close();
       };
     };
+    fetchEmployeeData()
     connectWebSocket();
-    //fetchReceiverData();
-    fetchEmployeeData(false)
     return () => {
       if (ws) {
         ws.close();
@@ -173,34 +180,30 @@ const ChatApp = ({ chatId }) => {
   }, []);
 
 
-  const fetchReceiverData = async () => {
-    try {
-      const response = await axios.get("http://localhost:3001/read-receiver");
-      if (response.data) {
-        const chatBodySender = document.querySelector('.chat-body-sender');
-        if (chatBodySender) chatBodySender.innerHTML = ''; 
-        rowMap.clear();
-        Object.entries(response.data).forEach(([key, sender]) => {
-          showData({ ...sender, id: key });
-        });
-      }
-    } catch (error) {
-      console.error("Error fetching receiver data:", error);
-    }
-  };
+// useEffect(() => {
+//   if (!(senderData  && receiverData)) {
+//     console.log("Both senderData and receiverData are null");
+//     return
+//   }else{
+//     showData([...senderData, ...receiverData]);
+//   }
+// }, [senderData, receiverData]);
 
- // Display chat messages
- let rowMap = new Map();
- function showData(sender,status) { 
-  console.log(status);
-  if (status === true) {
-    dataDisplay(sender,"chat-message-box-receiver");
-  }else{
-    dataDisplay(sender,"chat-message-box");
-  }
+let rowMap = new Map();
+function showData(senderData) { 
+senderData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+ senderData.forEach((getData) => {
+   console.log(getData)
+   if(getData.status == "sender"){
+     dataDisplay(getData, 'chat-message-box');
+   }else{
+     dataDisplay(getData,'chat-message-box-receiver');
+   }
+ });
 }
 
 function dataDisplay(sender,cls) {
+  console.log(sender.read)
   let messageElement;
   if (rowMap.has(sender.id)) {
     messageElement = rowMap.get(sender.id);
@@ -218,12 +221,48 @@ function dataDisplay(sender,cls) {
   if (sender.file) {
     const { data: fileData, type: fileType, name: fileName } = sender.file;
     if (fileType.startsWith('image/')) {
+      if(sender.status == "receiver"){
       const imageElement = document.createElement('img');
       imageElement.src = fileData;
       imageElement.alt = fileName;
       imageElement.style.maxWidth = '200px';
       imageElement.style.maxHeight = '200px';
+      imageElement.style.filter = 'blur(10px)';
+      imageElement.style.cursor = 'pointer';
+
+      const openIcon = document.createElement('i');
+      openIcon.className = 'fas fa-eye';
+      openIcon.style.position = 'absolute';
+      openIcon.style.top = '50%';
+      openIcon.style.left = '50%';
+      openIcon.style.transform = 'translate(-50%, -50%)';
+      openIcon.style.fontSize = '24px';
+      openIcon.style.color = '#fff';
+      openIcon.style.cursor = 'pointer';
+
+      const imageContainer = document.createElement('div');
+      imageContainer.style.position = 'relative';
+      imageContainer.style.display = 'inline-block';
+
+      imageContainer.appendChild(imageElement);
+      imageContainer.appendChild(openIcon);
+      messageContainer.appendChild(imageContainer);
+
+    openIcon.addEventListener('click', () => {
+    imageElement.style.filter = 'none';
+    openIcon.style.display = 'none'; 
+  });
+        
+      }else{
+        const imageElement = document.createElement('img');
+      imageElement.src = fileData;
+      imageElement.alt = fileName;
+      imageElement.style.maxWidth = '200px';
+      imageElement.style.maxHeight = '200px';
       messageContainer.appendChild(imageElement);
+
+      }
+      
     } else {
       const blob = new Blob([fileData], { type: fileType });
       const blobUrl = URL.createObjectURL(blob);
@@ -294,7 +333,6 @@ function dataDisplay(sender,cls) {
       <div className="chat-section sender">
       <div className="chat-header">
       <button id = "btn-back" onClick={handleBackToLogin} className="button" >Back</button>
-
         Sender Chat
       </div>
         <div className="main-chat-footer">

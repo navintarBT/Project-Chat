@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "./register.css";
 import axios from "axios";
+const serverUrl = import.meta.env.VITE_SERVER_URL;
 
 const RegisterPage = () => {
   const [username, setUsername] = useState("");
@@ -24,7 +25,7 @@ const RegisterPage = () => {
     };
 
     try {
-      let response = await axios.post('http://localhost:3001/register', formData, {
+      let response = await axios.post(`${serverUrl}/register`, formData, {
         headers: {
           'Content-Type': 'application/json',
         },

@@ -2,10 +2,13 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import "./login.css";
+const serverUrl = import.meta.env.VITE_SERVER_URL;
+console.log(serverUrl)
 
 const LoginPage = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+
   const navigate = useNavigate();
 
   const handleLogin = async () => {
@@ -13,21 +16,15 @@ const LoginPage = () => {
       alert("Username and password are required!");
       return;
     }
-
     try {
-        const response = await axios.get('http://localhost:3001/read-user');
+        const response = await axios.get(`${serverUrl}/read-user`);
+        console.log(response)
   
         if (response.status === 200) {
           const users = response.data;
           const user = users.find(user => user.userName === username && user.password === password);
-  
           if (user) {
-            const { status } = user;
-            if (status === "sender") {
-              navigate("/chatBot");
-            } else {
-              navigate("/receiver");
-            }
+              navigate("/pageStart", { state: { loggedInUser: user, allUsers: users } });
           } else {
             alert("Invalid username or password!");
           }

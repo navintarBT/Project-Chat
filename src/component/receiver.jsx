@@ -100,6 +100,7 @@ const ChatApp = () => {
   }
   const formData = {
     message,
+    status: 'receiver',
     file: (fileBase && fileBase.type && fileBase.name && fileBases) ? {
         type: fileBase.type,
         name: fileBase.name,

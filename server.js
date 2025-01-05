@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getDatabase, ref, set, get, serverTimestamp, push, remove, onValue } from "firebase/database";
+import { getDatabase, ref, set, get, serverTimestamp, push, remove, onValue,update } from "firebase/database";
 import express from "express";
 import cors from "cors";
 import http from "http";
@@ -52,22 +52,95 @@ wss.on('connection', (ws) => {
 
 app.post("/send-message", async (req, res) => {
   try {
-    const { message, file } = req.body;
+    const { message, senderId, receiverId, file } = req.body;
+    if (!message && !file) {
+      return res.status(400).json({
+        success: false,
+        message: "Message or file is required.",
+      });
+    }
+    if (!senderId || !receiverId) {
+      return res.status(400).json({
+        success: false,
+        message: "Sender ID and Receiver ID are required.",
+      });
+    }
+    const chatKey = senderId < receiverId 
+      ? `${senderId}_${receiverId}` 
+      : `${receiverId}_${senderId}`;
+
     const formData = {
       message,
-      file,
-      timestamp: serverTimestamp(),
+      senderId,
+      receiverId,
+      file: file || null,
+      timestamp: Date.now(), 
     };
-    const newEmployeeRef = push(ref(db, "sender"));
-    await set(newEmployeeRef, formData);
+    const newMessageRef = push(ref(db, `chats/${chatKey}/messages`));
+    await set(newMessageRef, formData);
+    const updates = {};
+    updates[`users/${senderId}/chats/${chatKey}`] = true;
+    updates[`users/${receiverId}/chats/${chatKey}`] = true;
+    await update(ref(db), updates);
+
     res.status(200).json({
       success: true,
-      message: "Data saved successfully",
+      message: "Message sent successfully.",
       data: formData,
     });
   } catch (error) {
+    console.error("Error sending message:", error);
     res.status(500).json({
       success: false,
+      message: "Failed to send message.",
+      error: error.message,
+    });
+  }
+});
+
+
+// get messages
+app.get("/get-messages", async (req, res) => {
+  try {
+    const { senderId, receiverId } = req.query;
+    if (!senderId || !receiverId) {
+      return res.status(400).json({
+        success: false,
+        message: "Sender ID and Receiver ID are required.",
+      });
+    }
+
+    const chatKey = senderId < receiverId 
+      ? `${senderId}_${receiverId}` 
+      : `${receiverId}_${senderId}`;
+
+    const messagesRef = ref(db, `chats/${chatKey}/messages`);
+    const snapshot = await get(messagesRef);
+
+    if (!snapshot.exists()) {
+      return res.status(404).json({
+        success: false,
+        message: "No messages found.",
+      });
+    }
+
+    const messages = [];
+    snapshot.forEach((childSnapshot) => {
+      messages.push({
+        id: childSnapshot.key,
+        ...childSnapshot.val(),
+      });
+    });
+
+    res.status(200).json({
+      success: true,
+      data: messages,
+    });
+  } catch (error) {
+    console.error("Error retrieving messages:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to retrieve messages.",
       error: error.message,
     });
   }
@@ -148,9 +221,10 @@ app.get("/read-user", async (req, res) => {
 
 app.post("/receiver-message", async (req, res) => {
   try {
-    const { message, file } = req.body;
+    const { message,status, file } = req.body;
     const formData = {
       message,
+      status,
       file,
       timestamp: serverTimestamp(),
     };
