@@ -30,24 +30,61 @@ const db = getDatabase(firebaseApp);
 wss.on('connection', (ws) => {
   console.log('Client connected');
 
-  const receiverRef = ref(db, 'receiver');
-  onValue(receiverRef, (snapshot) => {
-    const data = snapshot.val();
-    if (data) {
-      if (ws.readyState === ws.OPEN) { 
-        ws.send(JSON.stringify(data));
-      }
+  ws.on('message', (message) => {
+    const { senderId, receiverId } = JSON.parse(message);
+
+    if (!senderId || !receiverId) {
+      ws.send(JSON.stringify({
+        success: false,
+        message: 'Sender ID and Receiver ID are required.',
+      }));
+      return;
     }
+
+    const chatKey = senderId < receiverId 
+      ? `${senderId}_${receiverId}` 
+      : `${receiverId}_${senderId}`;
+
+    const messagesRef = ref(db, `chats/${chatKey}/messages`);
+
+    // ฟังการเปลี่ยนแปลงแบบ Realtime
+    onValue(messagesRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const messages = [];
+        snapshot.forEach((childSnapshot) => {
+          messages.push({
+            id: childSnapshot.key,
+            chatKey,
+            ...childSnapshot.val(),
+          });
+        });
+
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            success: true,
+            data: messages,
+          }));
+        }
+      } else {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            success: false,
+            message: 'No messages found.',
+          }));
+        }
+      }
+    });
   });
 
   ws.on('close', () => {
-    console.log('Client disconnecteddddd');
+    console.log('Client disconnected');
   });
 
   ws.on('error', (error) => {
     console.error('WebSocket error:', error);
   });
 });
+
 
 
 app.post("/send-message", async (req, res) => {
@@ -128,6 +165,7 @@ app.get("/get-messages", async (req, res) => {
     snapshot.forEach((childSnapshot) => {
       messages.push({
         id: childSnapshot.key,
+        chatKey:chatKey,
         ...childSnapshot.val(),
       });
     });

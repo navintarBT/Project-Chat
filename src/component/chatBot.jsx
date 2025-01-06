@@ -7,19 +7,17 @@ const serverUrl = import.meta.env.VITE_SERVER_URL;
 
 const ChatApp = () => {
   const location = useLocation();
-  const { loggedInUser, allUsers, userId } = location.state || {};
- console.log(loggedInUser)
- console.log(allUsers)
- console.log(userId)
+  const { loggedInUser, allUsers, userId,userName } = location.state || {};
+
+  console.log(userId);
+  console.log(userName);
   const [inputValue, setInputValue] = useState('');
   const [receiverValue, setReceiverValue] = useState('');
   const [fileBase, setFileBase] = useState(null);
   const [senderData, setSenderData] = useState(null);
   const [receiverData, setReceiverData] = useState(null);
+  const [combinedData, setCombinedData] = useState([]);
   const navigate = useNavigate();
-  const handleBackToLogin = () => {
-    navigate("/login");
-  };
 
   const handleSenderChange = (e) => {
     setInputValue(e.target.value);
@@ -122,89 +120,112 @@ const ChatApp = () => {
     }
   };
   // Fetch chat data from sender
+  
+  let rowMap = new Map();
+  // Fetch data from sender
   async function fetchEmployeeData() {
-    const senderID = loggedInUser.id;
-    const receiverID = userId; 
+    const senderId = loggedInUser.id;
+    const receiverId = userId;
     try {
       const response = await axios.get(`${serverUrl}/get-messages`, {
-        params: { senderID, receiverID },
+        params: { senderId, receiverId },
       });
-  
-      const chatBodySender = document.querySelector('.chat-body-sender');
-      if (chatBodySender) chatBodySender.innerHTML = '';
+      const chatBodySender = document.querySelector(".chat-body-sender");
+      if (chatBodySender) {
+        chatBodySender.innerHTML = ""; 
+      }
       rowMap.clear();
-      console.log(response.data);
-      setSenderData(response.data);
+      setSenderData(response.data.data);
     } catch (error) {
       console.error("Fetch error:", error.message);
     }
   }
-  // fetch data from receiver
 
+  // WebSocket to fetch receiver data
   useEffect(() => {
     let ws;
     const connectWebSocket = () => {
       ws = new WebSocket(`ws://localhost:3001`);
       ws.onopen = () => {
-        console.log('Connected to WebSocket server');
+        ws.send(JSON.stringify({
+          senderId: loggedInUser.id,
+          receiverId: userId,
+        }));
       };
       ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data) {
-          const chatBodySender = document.querySelector('.chat-body-sender');
-          if (chatBodySender) chatBodySender.innerHTML = ''; 
-          rowMap.clear();
-          const dataArray = Object.entries(data).map(([key, value]) => ({
-            id: key,
-            ...value
-          }));
-          setReceiverData(dataArray);
-          console.log(dataArray);
+        const chatBodySender = document.querySelector(".chat-body-sender");
+        if (chatBodySender) {
+          chatBodySender.innerHTML = "";
         }
+        rowMap.clear();
+        const data = JSON.parse(event.data);
+        setReceiverData(data.data);
       };
       ws.onclose = () => {
-        console.log('Disconnected from WebSocket server');
+        console.log("Disconnected from WebSocket server");
       };
       ws.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        console.error("WebSocket error:", error);
         ws.close();
       };
     };
-    fetchEmployeeData()
+
+    fetchEmployeeData();
     connectWebSocket();
+
     return () => {
       if (ws) {
         ws.close();
       }
     };
-  }, []);
+  }, [location, userId, userName]);
 
+  // Combine sender and receiver data
+  useEffect(() => {
+    if(!(senderData && receiverData)){
+      return;
+    }
+    const uniqueChats = [];
+    const combined = [...senderData, ...receiverData];
+    console.log(combined);
+    // Add only unique messages to combinedData
+    combined.forEach((message) => {
+      if (!rowMap.has(message.id)) {
+        rowMap.set(message.id, true);
+        uniqueChats.push(message);
+      }
+    });
 
-// useEffect(() => {
-//   if (!(senderData  && receiverData)) {
-//     console.log("Both senderData and receiverData are null");
-//     return
-//   }else{
-//     showData([...senderData, ...receiverData]);
-//   }
-// }, [senderData, receiverData]);
+    // Sort combined chats by timestamp
+    uniqueChats.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    setCombinedData(uniqueChats);
+  }, [senderData, receiverData]);
 
-let rowMap = new Map();
-function showData(senderData) { 
-senderData.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
- senderData.forEach((getData) => {
-   console.log(getData)
-   if(getData.status == "sender"){
-     dataDisplay(getData, 'chat-message-box');
-   }else{
-     dataDisplay(getData,'chat-message-box-receiver');
-   }
- });
-}
+  // Show combined data
+  useEffect(() => {
+    if (combinedData.length === 0) {
+      console.log("No chat data available");
+      return;
+    }
+    showData(combinedData);
+  }, [combinedData]);
+
+  // Display data in UI
+  function showData(chatData) {
+    chatData.forEach((message) => {
+      if (message.senderId === loggedInUser.id) {
+        dataDisplay(message, "chat-message-box");
+      } else {
+        dataDisplay(message, "chat-message-box-receiver");
+      }
+    });
+  }
+  
 
 function dataDisplay(sender,cls) {
-  console.log(sender.read)
   let messageElement;
+  console.log(rowMap);
+  console.log(sender.id);
   if (rowMap.has(sender.id)) {
     messageElement = rowMap.get(sender.id);
     messageElement.innerHTML = '';
@@ -221,7 +242,7 @@ function dataDisplay(sender,cls) {
   if (sender.file) {
     const { data: fileData, type: fileType, name: fileName } = sender.file;
     if (fileType.startsWith('image/')) {
-      if(sender.status == "receiver"){
+      if(sender.senderId !== loggedInUser.id){
       const imageElement = document.createElement('img');
       imageElement.src = fileData;
       imageElement.alt = fileName;
@@ -332,8 +353,10 @@ function dataDisplay(sender,cls) {
 
       <div className="chat-section sender">
       <div className="chat-header">
-      <button id = "btn-back" onClick={handleBackToLogin} className="button" >Back</button>
-        Sender Chat
+        <div className="profile-icon">
+       <i className="fas fa-user-circle" ></i>
+       <label >{userName}</label>
+        </div>
       </div>
         <div className="main-chat-footer">
         <div className="chat-footer">
