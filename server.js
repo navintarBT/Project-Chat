@@ -27,12 +27,11 @@ const firebaseConfig = {
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getDatabase(firebaseApp);
 
+//websocket connection for server
 wss.on('connection', (ws) => {
   console.log('Client connected');
-
-  ws.on('message', (message) => {
-    const { senderId, receiverId } = JSON.parse(message);
-
+  ws.on('message', async (message) => {
+    const { action, senderId, receiverId, messageId, newMessage, newFile } = JSON.parse(message);
     if (!senderId || !receiverId) {
       ws.send(JSON.stringify({
         success: false,
@@ -40,40 +39,93 @@ wss.on('connection', (ws) => {
       }));
       return;
     }
-
     const chatKey = senderId < receiverId 
       ? `${senderId}_${receiverId}` 
       : `${receiverId}_${senderId}`;
 
-    const messagesRef = ref(db, `chats/${chatKey}/messages`);
-
-    // ฟังการเปลี่ยนแปลงแบบ Realtime
-    onValue(messagesRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const messages = [];
-        snapshot.forEach((childSnapshot) => {
-          messages.push({
-            id: childSnapshot.key,
-            chatKey,
-            ...childSnapshot.val(),
-          });
-        });
-
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            success: true,
-            data: messages,
-          }));
-        }
-      } else {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({
-            success: false,
-            message: 'No messages found.',
-          }));
-        }
+    if (action === 'delete') {
+      if (!messageId) {
+        ws.send(JSON.stringify({
+          success: false,
+          message: 'Message ID is required for deletion.',
+        }));
+        return;
       }
-    });
+
+      const messageRef = ref(db, `chats/${chatKey}/messages/${messageId}`);
+      await remove(messageRef);
+
+      // Broadcast the deletion to all connected clients
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({
+            action: 'delete',
+            messageId,
+            senderId,
+            receiverId,
+          }));
+        }
+      });
+    } else if (action === 'update') {
+      if (!messageId || (!newMessage && !newFile)) {
+        ws.send(JSON.stringify({
+          success: false,
+          message: 'Message ID and new content are required for update.',
+        }));
+        return;
+      }
+
+      const messageRef = ref(db, `chats/${chatKey}/messages/${messageId}`);
+      const updates = {
+        message: newMessage || null,
+        file: newFile || null,
+        timestamp: Date.now(),
+      };
+      await update(messageRef, updates);
+
+      // Broadcast the update to all connected clients
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({
+            action: 'update',
+            messageId,
+            senderId,
+            receiverId,
+            newMessage,
+            newFile,
+          }));
+        }
+      });
+    } else {
+      const messagesRef = ref(db, `chats/${chatKey}/messages`);
+
+      onValue(messagesRef, (snapshot) => {
+        if (snapshot.exists()) {
+          const messages = [];
+          snapshot.forEach((childSnapshot) => {
+            messages.push({
+              id: childSnapshot.key,
+              chatKey,
+              ...childSnapshot.val(),
+            });
+          });
+
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              success: true,
+              data: messages,
+            }));
+          }
+        } else {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              success: false,
+              message: 'No messages found.',
+            }));
+          }
+        }
+      });
+    }
   });
 
   ws.on('close', () => {
@@ -86,7 +138,7 @@ wss.on('connection', (ws) => {
 });
 
 
-
+// insert message
 app.post("/send-message", async (req, res) => {
   try {
     const { message, senderId, receiverId, file } = req.body;
@@ -184,27 +236,7 @@ app.get("/get-messages", async (req, res) => {
   }
 });
 
-app.get("/read-all", async (req, res) => {
-  try {
-    const senderRef = ref(db, 'sender');
-    const snapshot = await get(senderRef);
-
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      const formattedData = Object.entries(data).map(([key, value]) => ({
-        id: key,
-        ...value
-      }));
-      res.json(formattedData);
-    } else {
-      res.status(204).json([]); // No Content, but with an empty array
-    }
-  } catch (error) {
-    console.error("Error reading data:", error);
-    res.status(500).json({ error: "Internal server error", message: error.message });
-  }
-});
-
+// register
 app.post("/register", async (req, res) => {
   try {
     const { userName, gmail, password, status } = req.body;
@@ -235,7 +267,7 @@ app.post("/register", async (req, res) => {
     });
   }
 });
-
+// get user
 app.get("/read-user", async (req, res) => {
   try {
     const senderRef = ref(db, 'user');
@@ -249,7 +281,7 @@ app.get("/read-user", async (req, res) => {
       }));
       res.json(formattedData);
     } else {
-      res.status(204).json([]); // No Content, but with an empty array
+      res.status(204).json([]);
     }
   } catch (error) {
     console.error("Error reading data:", error);
@@ -257,50 +289,75 @@ app.get("/read-user", async (req, res) => {
   }
 });
 
-app.post("/receiver-message", async (req, res) => {
+// Delete message
+app.delete("/delete-message", async (req, res) => {
   try {
-    const { message,status, file } = req.body;
-    const formData = {
-      message,
-      status,
-      file,
-      timestamp: serverTimestamp(),
-    };
-    const newEmployeeRef = push(ref(db, "receiver"));
-    await set(newEmployeeRef, formData);
+    const { messageId, senderId, receiverId } = req.body;
+    if (!messageId || !senderId || !receiverId) {
+      return res.status(400).json({
+        success: false,
+        message: "Message ID, Sender ID, and Receiver ID are required.",
+      });
+    }
+
+    const chatKey = senderId < receiverId 
+      ? `${senderId}_${receiverId}` 
+      : `${receiverId}_${senderId}`;
+
+    const messageRef = ref(db, `chats/${chatKey}/messages/${messageId}`);
+    await remove(messageRef);
+
     res.status(200).json({
       success: true,
-      message: "Data saved successfully",
-      data: formData,
+      message: "Message deleted successfully.",
     });
   } catch (error) {
+    console.error("Error deleting message:", error);
     res.status(500).json({
       success: false,
+      message: "Failed to delete message.",
       error: error.message,
     });
   }
 });
 
-app.get("/read-receiver", async (req, res) => {
+// Update message
+app.put("/update-message", async (req, res) => {
   try {
-    const senderRef = ref(db, 'receiver');
-    const snapshot = await get(senderRef);
-
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      const formattedData = Object.entries(data).map(([key, value]) => ({
-        id: key,
-        ...value
-      }));
-      res.json(formattedData);
-    } else {
-      res.status(204).json([]); // No Content, but with an empty array
+    const { messageId, senderId, receiverId, newMessage, newFile } = req.body;
+    if (!messageId || !senderId || !receiverId || (!newMessage && !newFile)) {
+      return res.status(400).json({
+        success: false,
+        message: "Message ID, Sender ID, Receiver ID, and new content are required.",
+      });
     }
+
+    const chatKey = senderId < receiverId 
+      ? `${senderId}_${receiverId}` 
+      : `${receiverId}_${senderId}`;
+
+    const messageRef = ref(db, `chats/${chatKey}/messages/${messageId}`);
+    const updates = {
+      message: newMessage || null,
+      file: newFile || null,
+    };
+    await update(messageRef, updates);
+
+    res.status(200).json({
+      success: true,
+      message: "Message updated successfully.",
+      data: updates,
+    });
   } catch (error) {
-    console.error("Error reading data:", error);
-    res.status(500).json({ error: "Internal server error", message: error.message });
+    console.error("Error updating message:", error);
+    res.status(500).json({
+      success: false,
+      message: "Failed to update message.",
+      error: error.message,
+    });
   }
 });
+
 
 const PORT = 3001;
 server.listen(PORT, () => {

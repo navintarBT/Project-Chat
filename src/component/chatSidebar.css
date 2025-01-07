@@ -68,7 +68,7 @@
 }
 
 .chatInfo i {
-  font-size: 30px; /* Adjust the size as needed */
+  font-size: 30px;
   color: #333;
-  margin-right: 10px; /* Add gap between icon and label */
+  margin-right: 10px; 
 }

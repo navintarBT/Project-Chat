@@ -92,6 +92,7 @@
   box-sizing: border-box;
   max-width: 250px; 
   width: auto;
+  
 }
 
 .chat-message-box:before {
@@ -276,4 +277,34 @@
 .profile-icon label {
   font-size: 18px; /* Adjust the size as needed */
   color: #333;
+}
+
+.popup {
+  display: none;
+  position: absolute;
+  top: -10px;
+  right: 0;
+  background-color: white;
+  border: 1px solid #ddd;
+  padding: 5px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  z-index: 10;
+}
+
+.chat-message-box:hover .popup {
+  display: block;
+}
+
+.edit-button,
+.delete-button {
+  background-color: transparent;
+  border: none;
+  cursor: pointer;
+  color: #007bff;
+  margin: 0 5px;
+}
+
+.edit-button:hover,
+.delete-button:hover {
+  color: #0056b3;
 }
