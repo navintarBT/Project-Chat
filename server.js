@@ -79,7 +79,6 @@ wss.on('connection', (ws) => {
       const updates = {
         message: newMessage || null,
         file: newFile || null,
-        timestamp: Date.now(),
       };
       await update(messageRef, updates);
 
@@ -93,6 +92,32 @@ wss.on('connection', (ws) => {
             receiverId,
             newMessage,
             newFile,
+          }));
+        }
+      });
+    } else if (action === 'read') {
+      if (!messageId) {
+        ws.send(JSON.stringify({
+          success: false,
+          message: 'Message ID is required for marking as read.',
+        }));
+        return;
+      }
+
+      const messageRef = ref(db, `chats/${chatKey}/messages/${messageId}`);
+      const updates = {
+        read: true,
+      };
+      await update(messageRef, updates);
+
+      // Broadcast the read status to all connected clients
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(JSON.stringify({
+            action: 'read',
+            messageId,
+            senderId,
+            receiverId,
           }));
         }
       });
@@ -227,7 +252,6 @@ app.get("/get-messages", async (req, res) => {
       data: messages,
     });
   } catch (error) {
-    console.error("Error retrieving messages:", error);
     res.status(500).json({
       success: false,
       message: "Failed to retrieve messages.",
@@ -355,6 +379,44 @@ app.put("/update-message", async (req, res) => {
       message: "Failed to update message.",
       error: error.message,
     });
+  }
+});
+
+app.put('/mark-message-read', async (req, res) => {
+  const { messageId, senderId, receiverId } = req.body;
+
+  if (!messageId || !senderId || !receiverId) {
+    return res.status(400).json({ error: 'Message ID, Sender ID, and Receiver ID are required.' });
+  }
+
+  const chatKey = senderId < receiverId 
+    ? `${senderId}_${receiverId}` 
+    : `${receiverId}_${senderId}`;
+
+  const messageRef = ref(db, `chats/${chatKey}/messages/${messageId}`);
+  const updates = {
+    read: true,
+  };
+
+  try {
+    await update(messageRef, updates);
+
+    // Broadcast the read status to all connected clients
+    wss.clients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(JSON.stringify({
+          action: 'read',
+          messageId,
+          senderId,
+          receiverId,
+        }));
+      }
+    });
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error('Error marking message as read:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -110,9 +110,12 @@
   padding: 0;
 }
 
+
+
 .chat-image-box {
   position: relative;
-  display: inline-block;
+  display: flex;
+  flex-direction: column;
   margin: 4px 20px 4px 0;
   padding: 7px 10px;
   color: #555;
@@ -281,9 +284,10 @@
 
 .popup {
   display: none;
+  flex-direction: column;
   position: absolute;
-  top: -10px;
-  right: 0;
+  bottom: 0;
+  left:  0px;
   background-color: white;
   border: 1px solid #ddd;
   padding: 5px;
@@ -291,9 +295,6 @@
   z-index: 10;
 }
 
-.chat-message-box:hover .popup {
-  display: block;
-}
 
 .edit-button,
 .delete-button {
@@ -307,4 +308,45 @@
 .edit-button:hover,
 .delete-button:hover {
   color: #0056b3;
+}
+
+.delete-icon {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  cursor: pointer;
+  color: #ff0000;
+  font-size: 20px;
+}
+
+.blurred-image {
+  max-width: 200px;
+  max-height: 200px;
+  filter: blur(10px);
+  cursor: pointer;
+}
+
+.open-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 24px;
+  color: #fff;
+  cursor: pointer;
+}
+
+.image-container {
+  position: relative;
+  display: inline-block;
+}
+
+.image {
+  max-width: 200px;
+  max-height: 200px;
+}
+
+.checkbox-container{
+  display: flex;
+  gap: 5px;
 }

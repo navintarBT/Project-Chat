@@ -8,17 +8,18 @@ const serverUrl = import.meta.env.VITE_SERVER_URL;
 const ChatApp = () => {
   const location = useLocation();
   const { loggedInUser, allUsers, userId, userName } = location.state || {};
-  let senderId = loggedInUser.id;
-  let receiverId = userId;
   const [inputValue, setInputValue] = useState('');
-  const [receiverValue, setReceiverValue] = useState('');
   const [fileBase, setFileBase] = useState(null);
   const [senderData, setSenderData] = useState(null);
   const [receiverData, setReceiverData] = useState(null);
   const [combinedData, setCombinedData] = useState([]);
   const [editAction, setEditAction] = useState(false);
   const [deleteAction, setDeleteAction] = useState(false);
+  const [leadOnly, setLeadOnly] = useState(false);
   const [ws, setWs] = useState(null);
+  let rowMap = new Map();
+  let senderId = loggedInUser.id;
+  let receiverId = userId;
 
   const handleSenderChange = (e) => {
     setInputValue(e.target.value);
@@ -28,9 +29,7 @@ const ChatApp = () => {
     const imageInput = document.getElementById("imageInput");
     if (imageInput) {
       imageInput.click();
-    } else {
-      console.error("File input element not found!");
-    }
+    } 
   };
 
   const handleImageUpload = async (event) => {
@@ -42,40 +41,61 @@ const ChatApp = () => {
         existingChatImageBox.remove();
       }
       reader.onload = (e) => {
+        console.log(file);
         setFileBase(file)
         const chatImageBox = document.createElement('div');
         chatImageBox.className = 'chat-image-box';
         const deleteIcon = document.createElement('span');
         deleteIcon.innerHTML = '&#10060;';
-        deleteIcon.style.position = 'absolute';
-        deleteIcon.style.top = '5px';
-        deleteIcon.style.right = '5px';
-        deleteIcon.style.cursor = 'pointer';
-        deleteIcon.style.color = '#ff0000';
-        deleteIcon.style.fontSize = '20px';
+        deleteIcon.className = 'delete-icon';
         deleteIcon.addEventListener('click', () => {
           chatImageBox.remove();
           setFileBase(null)
         });
+        const checkboxElement = document.createElement('div');
+        checkboxElement.className = 'checkbox-container';
+        const checkBox = document.createElement('input');
+        checkBox.type = 'checkbox';
+        checkBox.id = 'readOnlyCheckBox';
+        checkBox.checked = false;
+
+        const checkBoxLabel = document.createElement('label');
+        checkBoxLabel.htmlFor = 'readOnlyCheckBox';
+        checkBoxLabel.textContent = 'Read Only';
+
+        checkBox.addEventListener('change', () => {
+          if (checkBox.checked) {
+            setLeadOnly(true);
+          } else {
+            setLeadOnly(false);
+          }
+        });
+        
         chatImageBox.appendChild(deleteIcon);
         const imageElement = document.createElement('img');
         imageElement.src = e.target.result;
-        imageElement.alt = file.name || 'Uploaded image';
+        imageElement.alt = file.name;
         imageElement.style.maxWidth = '200px';
         imageElement.style.maxHeight = '200px';
         chatImageBox.appendChild(imageElement);
+
+        if (file.type.startsWith('image/')) {
+          checkboxElement.appendChild(checkBox);
+        checkboxElement.appendChild(checkBoxLabel);
+        chatImageBox.appendChild(checkboxElement);
+        }
         const chatFooter = document.querySelector('.chat-footer');
         const parentElement = chatFooter.parentNode;
         parentElement.insertBefore(chatImageBox, chatFooter);
       };
-      reader.onerror = (error) => console.error("Error reading file:", error);
       reader.readAsDataURL(file);
     }
   };
 
   // function post data of sender to  data base
-  const handleSend = async (isSender) => {
-    const message = isSender ? inputValue : receiverValue;
+  const handleSend = async () => {
+    console.log(leadOnly);
+    const message = inputValue;
     let fileBases = null;
     if (message === '' && fileBase == null) {
       return
@@ -104,6 +124,8 @@ const ChatApp = () => {
         type: fileBase.type,
         name: fileBase.name,
         data: fileBases,
+        read: false,
+        status:leadOnly,
       } : null,
     };
     try {
@@ -114,21 +136,19 @@ const ChatApp = () => {
       });
       fetchEmployeeData();
       setFileBase(null)
-      setReceiverValue('')
       setInputValue('')
     } catch (error) {
-      console.error("Error sending message:", error);
+      return error
     }
   };
-  // Fetch chat data from sender
 
-  let rowMap = new Map();
   // Fetch data from sender
   async function fetchEmployeeData() {
     try {
       const response = await axios.get(`${serverUrl}/get-messages`, {
         params: { senderId, receiverId },
       });
+      console.log(response);
       const chatBodySender = document.querySelector(".chat-body-sender");
       if (chatBodySender) {
         chatBodySender.innerHTML = "";
@@ -136,7 +156,7 @@ const ChatApp = () => {
       rowMap.clear();
       setSenderData(response.data.data);
     } catch (error) {
-      console.error("Fetch error:", error.message);
+      return error
     }
   }
 
@@ -157,12 +177,16 @@ const ChatApp = () => {
         }
         rowMap.clear();
         const data = JSON.parse(event.data);
+        console.log(data.action);
         if (data.action === 'delete') {
           setReceiverData((prevMessages) => prevMessages.filter((msg) => msg.id !== data.messageId));
           setSenderData((prevMessages) => prevMessages.filter((msg) => msg.id !== data.messageId));
         } else if (data.action === 'update') {
           setReceiverData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, message: data.newMessage } : msg));
           setSenderData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, message: data.newMessage } : msg));
+        } else if (data.action === 'read') {
+          setReceiverData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, read: true } : msg));
+          setSenderData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, read: true } : msg));
         } else {
           setReceiverData(data.data);
         }
@@ -188,29 +212,61 @@ const ChatApp = () => {
   }, [location, senderId, receiverId, userName, deleteAction, editAction]);
 
   useEffect(() => {
-    if (!(senderData && receiverData)) {
-      return;
-    }
-    const uniqueChats = [];
-    const combined = [...senderData, ...receiverData];
+    if (!senderData || !receiverData) return;
 
-    combined.forEach((message) => {
-      if (!rowMap.has(message.id)) {
-        rowMap.set(message.id, true);
-        uniqueChats.push(message);
-      }
-    });
+    const uniqueChats = [...senderData, ...receiverData].filter((message, index, self) =>
+      index === self.findIndex((m) => m.id === message.id)
+    );
 
     uniqueChats.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
     setCombinedData(uniqueChats);
   }, [senderData, receiverData]);
 
   useEffect(() => {
-    if (combinedData.length === 0) {
-      return;
+    if (combinedData.length > 0) {
+      showData(combinedData);
     }
-    showData(combinedData);
   }, [combinedData]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible'&& location.pathname === '/chatbot') {
+        combinedData.forEach((message) => {
+          if (!message.read && message.receiverId === loggedInUser.id && !message.file?.type.startsWith('image/')) {
+            markMessageAsRead(message.id);
+          }
+        });
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [combinedData]);
+
+
+  const markMessageAsRead = async (messageId) => {
+    try {
+      await axios.put(`${serverUrl}/mark-message-read`, {
+        messageId,
+        senderId,
+        receiverId,
+      });
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            action: 'read',
+            messageId,
+            senderId,
+            receiverId,
+          })
+        );
+      }
+    } catch (error) {
+      return error
+    }
+  };
 
   function showData(chatData) {
     chatData.forEach((message) => {
@@ -221,11 +277,19 @@ const ChatApp = () => {
       }
     });
   }
+  function base64ToBlob(base64, mime) {
+    const byteCharacters = atob(base64.split(',')[1]);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    return new Blob([byteArray], { type: mime });
+  }
 
   function dataDisplay(sender, cls) {
     let messageElement;
     if (rowMap.has(sender.id)) {
-      console.log(rowMap);
       messageElement = rowMap.get(sender.id);
       messageElement.innerHTML = '';
     } else {
@@ -238,6 +302,20 @@ const ChatApp = () => {
           <button class="edit-button">Edit</button>
           <button class="delete-button">Delete</button>
         `;
+        messageElement.appendChild(popup);
+      
+        messageElement.addEventListener('contextmenu', (event) => {
+          event.preventDefault();
+          console.log("object");
+          popup.style.display = 'block';
+        });
+      
+        document.addEventListener('click', (event) => {
+          if (!popup.contains(event.target)) {
+            popup.style.display = 'none';
+          }
+        });
+      
         let deleteButton = popup.querySelector('.delete-button');
         deleteButton.addEventListener('click', async () => {
           const messageId = messageElement.getAttribute('id');
@@ -245,7 +323,7 @@ const ChatApp = () => {
             await axios.delete(`${serverUrl}/delete-message`, {
               data: { messageId, senderId, receiverId },
             });
-
+      
             if (ws && ws.readyState === WebSocket.OPEN) {
               ws.send(
                 JSON.stringify({
@@ -255,41 +333,71 @@ const ChatApp = () => {
                   receiverId,
                 })
               );
-              console.log('Delete action sent to WebSocket');
             }
-
             messageElement.remove();
             setDeleteAction((prev) => !prev);
+            popup.style.display = 'none';
           } catch (error) {
             console.error('Error deleting message:', error);
           }
-
         });
-
-        // Edit message
+      
         let editButton = popup.querySelector('.edit-button');
         editButton.addEventListener('click', () => {
+          if (messageElement.querySelector('.edit-input')) {
+            return;
+          }
+        
           const currentMessage = messageElement.querySelector('p').textContent;
           const editInput = document.createElement('input');
           editInput.type = 'text';
           editInput.value = currentMessage;
           editInput.className = 'edit-input';
-
+        
+          const fileInput = document.createElement('input');
+          fileInput.type = 'file';
+          fileInput.className = 'file-input';
+        
           const saveButton = document.createElement('button');
           saveButton.textContent = 'Save';
           saveButton.className = 'save-button';
-
+        
+          const clearButton = document.createElement('button');
+          clearButton.textContent = 'Cancel';
+          clearButton.className = 'clear-button';
+        
+          popup.style.display = 'none';
+        
           saveButton.addEventListener('click', async () => {
             const newMessage = editInput.value;
             const messageId = messageElement.getAttribute('id');
+            let fileData = null;
+            console.log(fileInput.files);
+        
+            if (fileInput.files.length > 0) {
+              const file = fileInput.files[0];
+              fileData = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = (error) => reject(error);
+                reader.readAsDataURL(file);
+              });
+            }
+        
             try {
-              await axios.put(`${serverUrl}/update-message`, {
+              let a = await axios.put(`${serverUrl}/update-message`, {
                 messageId,
                 senderId,
                 receiverId,
                 newMessage,
+                newFile: fileData ? {
+                  type: fileInput.files[0].type,
+                  name: fileInput.files[0].name,
+                  data: fileData,
+                } : null,
               });
-
+              console.log(a);
+        
               if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(
                   JSON.stringify({
@@ -298,79 +406,108 @@ const ChatApp = () => {
                     senderId,
                     receiverId,
                     newMessage,
+                    newFile: fileData ? {
+                      type: fileInput.files[0].type,
+                      name: fileInput.files[0].name,
+                      data: fileData,
+                    } : null,
                   })
                 );
-                console.log('Delete action sent to WebSocket');
               }
-              messageElement.querySelector('.message-text').textContent = newMessage;
+
+        
+              // messageElement.querySelector('p').textContent = newMessage;
+              // if (fileData) {
+              //   const fileLink = document.createElement('a');
+              //   fileLink.href = fileData;
+              //   fileLink.download = fileInput.files[0].name;
+              //   fileLink.textContent = fileInput.files[0].name;
+              //   messageElement.appendChild(fileLink);
+              // }
               messageElement.removeChild(editInput);
+              messageElement.removeChild(fileInput);
               messageElement.removeChild(saveButton);
+              messageElement.removeChild(clearButton);
               setEditAction((prev) => !prev);
+
             } catch (error) {
               console.error('Error updating message:', error);
             }
           });
-
+        
+          clearButton.addEventListener('click', () => {
+            messageElement.removeChild(editInput);
+            messageElement.removeChild(fileInput);
+            messageElement.removeChild(saveButton);
+            messageElement.removeChild(clearButton);
+          });
+        
           messageElement.appendChild(editInput);
+          messageElement.appendChild(fileInput);
           messageElement.appendChild(saveButton);
+          messageElement.appendChild(clearButton);
         });
-        messageElement.appendChild(popup);
       }
       messageElement.setAttribute('id', sender.id);
       rowMap.set(sender.id, messageElement);
     }
+    
     const timestamp = new Date(sender.timestamp).toLocaleString();
     const messageContainer = document.createElement('div');
     messageContainer.className = 'message-container';
 
     if (sender.file) {
       const { data: fileData, type: fileType, name: fileName } = sender.file;
+      let blob = base64ToBlob(fileData, fileType);
+      let blobUrl = URL.createObjectURL(blob);
       if (fileType.startsWith('image/')) {
         if (sender.senderId !== loggedInUser.id) {
           const imageElement = document.createElement('img');
+          const downloadLink = document.createElement('a');
+          const openIcon = document.createElement('i');
           imageElement.src = fileData;
           imageElement.alt = fileName;
-          imageElement.style.maxWidth = '200px';
-          imageElement.style.maxHeight = '200px';
-          imageElement.style.filter = 'blur(10px)';
-          imageElement.style.cursor = 'pointer';
-
-          const openIcon = document.createElement('i');
-          openIcon.className = 'fas fa-eye';
-          openIcon.style.position = 'absolute';
-          openIcon.style.top = '50%';
-          openIcon.style.left = '50%';
-          openIcon.style.transform = 'translate(-50%, -50%)';
-          openIcon.style.fontSize = '24px';
-          openIcon.style.color = '#fff';
-          openIcon.style.cursor = 'pointer';
-
           const imageContainer = document.createElement('div');
-          imageContainer.style.position = 'relative';
-          imageContainer.style.display = 'inline-block';
-
+          imageContainer.className = 'image-container';
           imageContainer.appendChild(imageElement);
-          imageContainer.appendChild(openIcon);
-          messageContainer.appendChild(imageContainer);
+          if(sender.read==true) {
+            if(sender.senderId !== loggedInUser.id) {
+              downloadLink.href = blobUrl;
+              downloadLink.download = fileName;
+              const messageText = document.createElement('p');
+              messageText.textContent = 'Download';
+              downloadLink.appendChild(messageText);
+              imageElement.className = 'image';
+            } else {
+              imageElement.className = 'blurred-image';
+            openIcon.className = 'fas fa-eye open-icon';
+            imageContainer.appendChild(openIcon);
+            }
+          }else {
+            imageElement.className = 'blurred-image';
+            openIcon.className = 'fas fa-eye open-icon';
+            imageContainer.appendChild(openIcon);
+          }
+            openIcon.addEventListener('click', async () => {
+              imageElement.classList.remove('blurred-image');
+              openIcon.style.display = 'none';
+              await markMessageAsRead(sender.id);
+              imageContainer.className = 'fas fa-check-double read';
+            });
 
-          openIcon.addEventListener('click', () => {
-            imageElement.style.filter = 'none';
-            openIcon.style.display = 'none';
-          });
+          messageContainer.appendChild(imageContainer);
+          messageContainer.appendChild(downloadLink);
+
 
         } else {
           const imageElement = document.createElement('img');
           imageElement.src = fileData;
           imageElement.alt = fileName;
-          imageElement.style.maxWidth = '200px';
-          imageElement.style.maxHeight = '200px';
+          imageElement.className = 'image';
           messageContainer.appendChild(imageElement);
-
         }
 
       } else {
-        const blob = new Blob([fileData], { type: fileType });
-        const blobUrl = URL.createObjectURL(blob);
         const fileLink = document.createElement('a');
         fileLink.href = blobUrl;
         fileLink.download = fileName;
@@ -378,10 +515,11 @@ const ChatApp = () => {
         fileLink.style.textDecoration = 'underline';
         fileLink.target = '_blank';
         messageContainer.appendChild(fileLink);
-        fileLink.addEventListener('click', () => {
-          URL.revokeObjectURL(blobUrl);
-        });
-      }
+        fileLink.addEventListener('click', async () => {
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 1000); 
+        await markMessageAsRead(sender.id);
+      });
+    }
       const messageText = document.createElement('p');
       messageText.textContent = sender.message || '';
       messageContainer.appendChild(messageText);
@@ -393,16 +531,15 @@ const ChatApp = () => {
 
     const messageInfo = document.createElement('div');
     messageInfo.className = 'message-info';
-
     const timestampElement = document.createElement('span');
     timestampElement.className = 'timestamp';
     timestampElement.textContent = timestamp;
     messageInfo.appendChild(timestampElement);
-
-    const readStatusIcon = document.createElement('i');
+    if(sender.senderId === loggedInUser.id){
+      const readStatusIcon = document.createElement('i');
     readStatusIcon.className = sender.read ? 'fas fa-check-double read' : 'fas fa-check unread';
     messageInfo.appendChild(readStatusIcon);
-
+    }
     messageContainer.appendChild(messageInfo);
     messageElement.appendChild(messageContainer);
 
@@ -419,10 +556,9 @@ const ChatApp = () => {
       }
       chatBody.scrollTop = chatBody.scrollHeight;
     } else {
-      console.error('Sender chat section not found');
+      return
     }
   }
-
 
   return (
     <div className="chat-container">
@@ -435,7 +571,6 @@ const ChatApp = () => {
         style={{ display: "none" }}
         onChange={handleImageUpload}
       />
-
       <div className="chat-section sender">
         <div className="chat-header">
           <div className="profile-icon">
