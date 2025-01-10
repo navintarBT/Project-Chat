@@ -1,0 +1,31 @@
+
+  .prev-icon{
+    color: white;
+    cursor: pointer;
+    
+  }
+  .Previous {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 15px;
+  }
+  .show-image-container {
+    width: 100vw; 
+    height: 100vh;
+    margin: 0;
+    overflow: hidden;
+    background-color: rgba(0, 0, 0, 0.568);
+    position: fixed; 
+    top: 0;
+    left: 0;
+    z-index: 999; 
+    display: flex; 
+    flex-direction: column;
+    justify-content: center;
+}
+
+
+
+
+
+  

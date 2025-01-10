@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from "react";
 import "./chatBox.css";
 import axios from "axios";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import "@fortawesome/fontawesome-free/css/all.min.css";
 const serverUrl = import.meta.env.VITE_SERVER_URL;
 
 const ChatApp = () => {
+  const navigate = useNavigate();
   const location = useLocation();
-  const { loggedInUser, allUsers, userId, userName } = location.state || {};
+  const { loggedInUser, allUsers, userId, userName,userRead } = location.state || {};
   const [inputValue, setInputValue] = useState('');
   const [fileBase, setFileBase] = useState(null);
   const [senderData, setSenderData] = useState(null);
@@ -17,6 +18,7 @@ const ChatApp = () => {
   const [deleteAction, setDeleteAction] = useState(false);
   const [leadOnly, setLeadOnly] = useState(false);
   const [ws, setWs] = useState(null);
+  
   let rowMap = new Map();
   let senderId = loggedInUser.id;
   let receiverId = userId;
@@ -64,6 +66,7 @@ const ChatApp = () => {
         checkBoxLabel.textContent = 'Read Only';
 
         checkBox.addEventListener('change', () => {
+          console.log(checkBox.checked);
           if (checkBox.checked) {
             setLeadOnly(true);
           } else {
@@ -126,6 +129,7 @@ const ChatApp = () => {
         data: fileBases,
         read: false,
         status:leadOnly,
+        readOnly: false
       } : null,
     };
     try {
@@ -187,6 +191,9 @@ const ChatApp = () => {
         } else if (data.action === 'read') {
           setReceiverData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, read: true } : msg));
           setSenderData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, read: true } : msg));
+        } else if (data.action === 'readOnly') {
+          setReceiverData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, read: true } : msg));
+          setSenderData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, read: true } : msg));
         } else {
           setReceiverData(data.data);
         }
@@ -245,13 +252,23 @@ const ChatApp = () => {
   }, [combinedData]);
 
 
-  const markMessageAsRead = async (messageId) => {
+  const markMessageAsRead = async (messageId,readOnly) => {
     try {
+      let statusRead 
+      console.log(statusRead);
+      if (readOnly == "only") {
+        statusRead = true
+      }else{
+        statusRead = false
+      }
       await axios.put(`${serverUrl}/mark-message-read`, {
         messageId,
         senderId,
         receiverId,
+        statusRead
       });
+
+     
 
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(
@@ -288,6 +305,7 @@ const ChatApp = () => {
   }
 
   function dataDisplay(sender, cls) {
+    console.log(sender);
     let messageElement;
     if (rowMap.has(sender.id)) {
       messageElement = rowMap.get(sender.id);
@@ -383,39 +401,20 @@ const ChatApp = () => {
                 reader.readAsDataURL(file);
               });
             }
-        
-            try {
-              let a = await axios.put(`${serverUrl}/update-message`, {
-                messageId,
-                senderId,
-                receiverId,
-                newMessage,
-                newFile: fileData ? {
-                  type: fileInput.files[0].type,
-                  name: fileInput.files[0].name,
-                  data: fileData,
-                } : null,
-              });
-              console.log(a);
-        
-              if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(
-                  JSON.stringify({
-                    action: 'update',
-                    messageId,
-                    senderId,
-                    receiverId,
-                    newMessage,
-                    newFile: fileData ? {
-                      type: fileInput.files[0].type,
-                      name: fileInput.files[0].name,
-                      data: fileData,
-                    } : null,
-                  })
-                );
-              }
 
-        
+            let dataUpdate = {
+              action: 'update',
+              messageId,
+              senderId,
+              receiverId,
+              newMessage,
+              newFile: fileData ? {
+                type: fileInput.files[0].type,
+                name: fileInput.files[0].name,
+                data: fileData,
+              } : null,
+            }
+             await resolve(dataUpdate)
               // messageElement.querySelector('p').textContent = newMessage;
               // if (fileData) {
               //   const fileLink = document.createElement('a');
@@ -429,10 +428,6 @@ const ChatApp = () => {
               messageElement.removeChild(saveButton);
               messageElement.removeChild(clearButton);
               setEditAction((prev) => !prev);
-
-            } catch (error) {
-              console.error('Error updating message:', error);
-            }
           });
         
           clearButton.addEventListener('click', () => {
@@ -470,7 +465,12 @@ const ChatApp = () => {
           const imageContainer = document.createElement('div');
           imageContainer.className = 'image-container';
           imageContainer.appendChild(imageElement);
-          if(sender.read==true) {
+          if(sender.file.status==false) {
+            imageElement.className = 'blurred-image';
+            openIcon.className = 'fas fa-eye open-icon';
+            imageContainer.appendChild(openIcon);
+          }
+          if(sender.read==true ) {
             if(sender.senderId !== loggedInUser.id) {
               downloadLink.href = blobUrl;
               downloadLink.download = fileName;
@@ -478,8 +478,9 @@ const ChatApp = () => {
               messageText.textContent = 'Download';
               downloadLink.appendChild(messageText);
               imageElement.className = 'image';
+              openIcon.style.display = 'none';
             } else {
-              imageElement.className = 'blurred-image';
+            imageElement.className = 'blurred-image';
             openIcon.className = 'fas fa-eye open-icon';
             imageContainer.appendChild(openIcon);
             }
@@ -489,10 +490,17 @@ const ChatApp = () => {
             imageContainer.appendChild(openIcon);
           }
             openIcon.addEventListener('click', async () => {
+              if(sender.file.status==false) {
+              console.log(sender.file.status);
               imageElement.classList.remove('blurred-image');
               openIcon.style.display = 'none';
               await markMessageAsRead(sender.id);
               imageContainer.className = 'fas fa-check-double read';
+              } else {
+                let picture = sender.file;
+                navigate('/showImage',{state: {loggedInUser, allUsers,userId,userName,picture}})
+                await markMessageAsRead(sender.id,"only");
+              }
             });
 
           messageContainer.appendChild(imageContainer);
@@ -557,6 +565,18 @@ const ChatApp = () => {
       chatBody.scrollTop = chatBody.scrollHeight;
     } else {
       return
+    }
+  }
+
+  async function resolve(dataUpdate) {
+    console.log(dataUpdate);
+    let a = await axios.put(`${serverUrl}/update-message`, dataUpdate);
+    console.log(a);
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(
+        JSON.stringify(dataUpdate)
+      );
     }
   }
 

@@ -383,7 +383,7 @@ app.put("/update-message", async (req, res) => {
 });
 
 app.put('/mark-message-read', async (req, res) => {
-  const { messageId, senderId, receiverId } = req.body;
+  const { messageId, senderId, receiverId,statusRead } = req.body;
 
   if (!messageId || !senderId || !receiverId) {
     return res.status(400).json({ error: 'Message ID, Sender ID, and Receiver ID are required.' });
@@ -394,9 +394,16 @@ app.put('/mark-message-read', async (req, res) => {
     : `${receiverId}_${senderId}`;
 
   const messageRef = ref(db, `chats/${chatKey}/messages/${messageId}`);
-  const updates = {
-    read: true,
-  };
+  let updates;
+  if (statusRead == true) {
+    updates = {
+      readOnly: true,
+    };
+  } else {
+    updates = {
+      read: true,
+    };
+  }
 
   try {
     await update(messageRef, updates);

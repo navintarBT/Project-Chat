@@ -6,6 +6,7 @@ import ChatSidebar from "./component/chatSidebar";
 import LoginPage from "./component/login";
 import RegisterPage from "./component/regrister";
 import PageStart from "./component/pageStart";
+import ShowImage from "./component/showImage";
 
 function App() {
   return (
@@ -29,6 +30,12 @@ function App() {
               <ChatSidebar />
               <ChatBox />
             </div>
+          }
+        />
+         <Route
+          path="/showImage"
+          element={
+          <ShowImage />
           }
         />
         <Route path="/" element={<Navigate to="/login" />} />
