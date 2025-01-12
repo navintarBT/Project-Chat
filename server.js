@@ -3,7 +3,7 @@ import { getDatabase, ref, set, get, serverTimestamp, push, remove, onValue,upda
 import express from "express";
 import cors from "cors";
 import http from "http";
-import { WebSocketServer } from "ws";
+import { WebSocket,WebSocketServer } from "ws";
 
 const app = express();
 app.use(cors());
@@ -29,9 +29,8 @@ const db = getDatabase(firebaseApp);
 
 //websocket connection for server
 wss.on('connection', (ws) => {
-  console.log('Client connected');
   ws.on('message', async (message) => {
-    const { action, senderId, receiverId, messageId, newMessage, newFile } = JSON.parse(message);
+    const { action, senderId, receiverId, messageId, newMessage, newFile,statusRead } = JSON.parse(message);
     if (!senderId || !receiverId) {
       ws.send(JSON.stringify({
         success: false,
@@ -55,7 +54,6 @@ wss.on('connection', (ws) => {
       const messageRef = ref(db, `chats/${chatKey}/messages/${messageId}`);
       await remove(messageRef);
 
-      // Broadcast the deletion to all connected clients
       wss.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify({
@@ -76,22 +74,41 @@ wss.on('connection', (ws) => {
       }
 
       const messageRef = ref(db, `chats/${chatKey}/messages/${messageId}`);
+      
+      // Fetch the existing message to merge file data
+      const existingMessageSnapshot = await get(messageRef);
+      const existingMessage = existingMessageSnapshot.val();
+    
       const updates = {
-        message: newMessage || null,
-        file: newFile || null,
+        message: newMessage || existingMessage.message,
+        file: newFile ? {
+          ...existingMessage.file,
+          ...newFile,
+        } : existingMessage.file,
       };
-      await update(messageRef, updates);
 
+      if (updates.file) {
+        Object.keys(updates.file).forEach(key => {
+          if (updates.file[key] === null) {
+            delete updates.file[key];
+          }
+        });
+      }
+    
+      await update(messageRef, updates);
+    
       // Broadcast the update to all connected clients
       wss.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(JSON.stringify({
             action: 'update',
-            messageId,
-            senderId,
-            receiverId,
-            newMessage,
-            newFile,
+            updatedMessage: {
+              id: messageId,
+              senderId,
+              receiverId,
+              message: updates.message,
+              file: updates.file,
+            },
           }));
         }
       });
@@ -105,11 +122,17 @@ wss.on('connection', (ws) => {
       }
 
       const messageRef = ref(db, `chats/${chatKey}/messages/${messageId}`);
-      const updates = {
-        read: true,
-      };
+      let updates;
+  if (statusRead == true) {
+    updates = {
+      readOnly: true,
+    };
+  } else {
+    updates = {
+      read: true,
+    };
+  }
       await update(messageRef, updates);
-
       // Broadcast the read status to all connected clients
       wss.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
@@ -313,78 +336,9 @@ app.get("/read-user", async (req, res) => {
   }
 });
 
-// Delete message
-app.delete("/delete-message", async (req, res) => {
-  try {
-    const { messageId, senderId, receiverId } = req.body;
-    if (!messageId || !senderId || !receiverId) {
-      return res.status(400).json({
-        success: false,
-        message: "Message ID, Sender ID, and Receiver ID are required.",
-      });
-    }
-
-    const chatKey = senderId < receiverId 
-      ? `${senderId}_${receiverId}` 
-      : `${receiverId}_${senderId}`;
-
-    const messageRef = ref(db, `chats/${chatKey}/messages/${messageId}`);
-    await remove(messageRef);
-
-    res.status(200).json({
-      success: true,
-      message: "Message deleted successfully.",
-    });
-  } catch (error) {
-    console.error("Error deleting message:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to delete message.",
-      error: error.message,
-    });
-  }
-});
-
-// Update message
-app.put("/update-message", async (req, res) => {
-  try {
-    const { messageId, senderId, receiverId, newMessage, newFile } = req.body;
-    if (!messageId || !senderId || !receiverId || (!newMessage && !newFile)) {
-      return res.status(400).json({
-        success: false,
-        message: "Message ID, Sender ID, Receiver ID, and new content are required.",
-      });
-    }
-
-    const chatKey = senderId < receiverId 
-      ? `${senderId}_${receiverId}` 
-      : `${receiverId}_${senderId}`;
-
-    const messageRef = ref(db, `chats/${chatKey}/messages/${messageId}`);
-    const updates = {
-      message: newMessage || null,
-      file: newFile || null,
-    };
-    await update(messageRef, updates);
-
-    res.status(200).json({
-      success: true,
-      message: "Message updated successfully.",
-      data: updates,
-    });
-  } catch (error) {
-    console.error("Error updating message:", error);
-    res.status(500).json({
-      success: false,
-      message: "Failed to update message.",
-      error: error.message,
-    });
-  }
-});
 
 app.put('/mark-message-read', async (req, res) => {
   const { messageId, senderId, receiverId,statusRead } = req.body;
-
   if (!messageId || !senderId || !receiverId) {
     return res.status(400).json({ error: 'Message ID, Sender ID, and Receiver ID are required.' });
   }
@@ -407,8 +361,6 @@ app.put('/mark-message-read', async (req, res) => {
 
   try {
     await update(messageRef, updates);
-
-    // Broadcast the read status to all connected clients
     wss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(JSON.stringify({

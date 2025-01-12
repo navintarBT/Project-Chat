@@ -8,14 +8,12 @@ const serverUrl = import.meta.env.VITE_SERVER_URL;
 const ChatApp = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { loggedInUser, allUsers, userId, userName,userRead } = location.state || {};
+  const { loggedInUser, allUsers, userId, userName } = location.state || {};
   const [inputValue, setInputValue] = useState('');
   const [fileBase, setFileBase] = useState(null);
   const [senderData, setSenderData] = useState(null);
   const [receiverData, setReceiverData] = useState(null);
   const [combinedData, setCombinedData] = useState([]);
-  const [editAction, setEditAction] = useState(false);
-  const [deleteAction, setDeleteAction] = useState(false);
   const [leadOnly, setLeadOnly] = useState(false);
   const [ws, setWs] = useState(null);
   
@@ -164,6 +162,22 @@ const ChatApp = () => {
     }
   }
 
+  const handleDeleteMessage = (messageId) => {
+    setSenderData((prevMessages) => prevMessages.filter((msg) => msg.id !== messageId));
+    setReceiverData((prevMessages) => prevMessages.filter((msg) => msg.id !== messageId));
+  };
+  
+  const handleAddMessage = (newMessage) => {
+    setSenderData((prevMessages) => [...prevMessages, newMessage]);
+    setReceiverData((prevMessages) => [...prevMessages, newMessage]);
+  };
+
+  const handleUpdateMessage = (updatedMessage) => {
+    console.log(updatedMessage);
+    setSenderData((prevMessages) => prevMessages.map((msg) => msg.id === updatedMessage.id ? updatedMessage : msg));
+    setReceiverData((prevMessages) => prevMessages.map((msg) => msg.id === updatedMessage.id ? updatedMessage : msg));
+  };
+  
   // WebSocket to fetch receiver data
   useEffect(() => {
     const connectWebSocket = () => {
@@ -181,17 +195,14 @@ const ChatApp = () => {
         }
         rowMap.clear();
         const data = JSON.parse(event.data);
-        console.log(data.action);
+        console.log(data)
         if (data.action === 'delete') {
-          setReceiverData((prevMessages) => prevMessages.filter((msg) => msg.id !== data.messageId));
-          setSenderData((prevMessages) => prevMessages.filter((msg) => msg.id !== data.messageId));
+          handleDeleteMessage(data.messageId);
         } else if (data.action === 'update') {
-          setReceiverData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, message: data.newMessage } : msg));
-          setSenderData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, message: data.newMessage } : msg));
+          handleUpdateMessage(data.updatedMessage);
+        } else if (data.action === 'add') {
+          handleAddMessage(data.newMessage);
         } else if (data.action === 'read') {
-          setReceiverData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, read: true } : msg));
-          setSenderData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, read: true } : msg));
-        } else if (data.action === 'readOnly') {
           setReceiverData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, read: true } : msg));
           setSenderData((prevMessages) => prevMessages.map((msg) => msg.id === data.messageId ? { ...msg, read: true } : msg));
         } else {
@@ -216,11 +227,10 @@ const ChatApp = () => {
         ws.close();
       }
     };
-  }, [location, senderId, receiverId, userName, deleteAction, editAction]);
+  }, [location, senderId, receiverId, userName]);
 
   useEffect(() => {
     if (!senderData || !receiverData) return;
-
     const uniqueChats = [...senderData, ...receiverData].filter((message, index, self) =>
       index === self.findIndex((m) => m.id === message.id)
     );
@@ -251,11 +261,9 @@ const ChatApp = () => {
     };
   }, [combinedData]);
 
-
   const markMessageAsRead = async (messageId,readOnly) => {
     try {
       let statusRead 
-      console.log(statusRead);
       if (readOnly == "only") {
         statusRead = true
       }else{
@@ -268,8 +276,6 @@ const ChatApp = () => {
         statusRead
       });
 
-     
-
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(
           JSON.stringify({
@@ -277,6 +283,7 @@ const ChatApp = () => {
             messageId,
             senderId,
             receiverId,
+            statusRead
           })
         );
       }
@@ -308,6 +315,7 @@ const ChatApp = () => {
     console.log(sender);
     let messageElement;
     if (rowMap.has(sender.id)) {
+      console.log(rowMap)
       messageElement = rowMap.get(sender.id);
       messageElement.innerHTML = '';
     } else {
@@ -338,10 +346,6 @@ const ChatApp = () => {
         deleteButton.addEventListener('click', async () => {
           const messageId = messageElement.getAttribute('id');
           try {
-            await axios.delete(`${serverUrl}/delete-message`, {
-              data: { messageId, senderId, receiverId },
-            });
-      
             if (ws && ws.readyState === WebSocket.OPEN) {
               ws.send(
                 JSON.stringify({
@@ -352,8 +356,8 @@ const ChatApp = () => {
                 })
               );
             }
+            handleDeleteMessage(messageId);
             messageElement.remove();
-            setDeleteAction((prev) => !prev);
             popup.style.display = 'none';
           } catch (error) {
             console.error('Error deleting message:', error);
@@ -362,10 +366,10 @@ const ChatApp = () => {
       
         let editButton = popup.querySelector('.edit-button');
         editButton.addEventListener('click', () => {
+
           if (messageElement.querySelector('.edit-input')) {
             return;
           }
-        
           const currentMessage = messageElement.querySelector('p').textContent;
           const editInput = document.createElement('input');
           editInput.type = 'text';
@@ -402,32 +406,39 @@ const ChatApp = () => {
               });
             }
 
-            let dataUpdate = {
-              action: 'update',
-              messageId,
+            const updatedMessage = {
+              id: messageId,
               senderId,
               receiverId,
-              newMessage,
-              newFile: fileData ? {
+              message: newMessage,
+              file: fileData ? {
                 type: fileInput.files[0].type,
                 name: fileInput.files[0].name,
                 data: fileData,
               } : null,
+            };
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(
+                JSON.stringify({
+                  action: 'update',
+                  messageId,
+                  senderId,
+                  receiverId,
+                  newMessage,
+                  newFile: fileData ? {
+                    type: fileInput.files[0].type,
+                    name: fileInput.files[0].name,
+                    data: fileData,
+                  } : null,
+                })
+              );
             }
-             await resolve(dataUpdate)
-              // messageElement.querySelector('p').textContent = newMessage;
-              // if (fileData) {
-              //   const fileLink = document.createElement('a');
-              //   fileLink.href = fileData;
-              //   fileLink.download = fileInput.files[0].name;
-              //   fileLink.textContent = fileInput.files[0].name;
-              //   messageElement.appendChild(fileLink);
-              // }
+            handleUpdateMessage(updatedMessage);
               messageElement.removeChild(editInput);
               messageElement.removeChild(fileInput);
               messageElement.removeChild(saveButton);
               messageElement.removeChild(clearButton);
-              setEditAction((prev) => !prev);
           });
         
           clearButton.addEventListener('click', () => {
@@ -456,66 +467,71 @@ const ChatApp = () => {
       let blob = base64ToBlob(fileData, fileType);
       let blobUrl = URL.createObjectURL(blob);
       if (fileType.startsWith('image/')) {
-        if (sender.senderId !== loggedInUser.id) {
-          const imageElement = document.createElement('img');
-          const downloadLink = document.createElement('a');
-          const openIcon = document.createElement('i');
-          imageElement.src = fileData;
-          imageElement.alt = fileName;
-          const imageContainer = document.createElement('div');
-          imageContainer.className = 'image-container';
-          imageContainer.appendChild(imageElement);
-          if(sender.file.status==false) {
-            imageElement.className = 'blurred-image';
-            openIcon.className = 'fas fa-eye open-icon';
-            imageContainer.appendChild(openIcon);
-          }
-          if(sender.read==true ) {
-            if(sender.senderId !== loggedInUser.id) {
-              downloadLink.href = blobUrl;
-              downloadLink.download = fileName;
-              const messageText = document.createElement('p');
-              messageText.textContent = 'Download';
-              downloadLink.appendChild(messageText);
-              imageElement.className = 'image';
-              openIcon.style.display = 'none';
-            } else {
-            imageElement.className = 'blurred-image';
-            openIcon.className = 'fas fa-eye open-icon';
-            imageContainer.appendChild(openIcon);
+        if (sender.readOnly == true) {
+          const messageText = document.createElement('p');
+         messageText.textContent = "ອ່ານແລ້ວ";
+         messageContainer.appendChild(messageText);
+        }else{
+          if (sender.senderId !== loggedInUser.id) {
+            const imageElement = document.createElement('img');
+            const downloadLink = document.createElement('a');
+            const openIcon = document.createElement('i');
+            imageElement.src = fileData;
+            imageElement.alt = fileName;
+            const imageContainer = document.createElement('div');
+            imageContainer.className = 'image-container';
+            imageContainer.appendChild(imageElement);
+            if(sender.file.status==false) {
+              imageElement.className = 'blurred-image';
+              openIcon.className = 'fas fa-eye open-icon';
+              imageContainer.appendChild(openIcon);
             }
-          }else {
-            imageElement.className = 'blurred-image';
-            openIcon.className = 'fas fa-eye open-icon';
-            imageContainer.appendChild(openIcon);
-          }
-            openIcon.addEventListener('click', async () => {
-              if(sender.file.status==false) {
-              console.log(sender.file.status);
-              imageElement.classList.remove('blurred-image');
-              openIcon.style.display = 'none';
-              await markMessageAsRead(sender.id);
-              imageContainer.className = 'fas fa-check-double read';
+            if(sender.read==true ) {
+              if(sender.senderId !== loggedInUser.id) {
+                downloadLink.href = blobUrl;
+                downloadLink.download = fileName;
+                const messageText = document.createElement('p');
+                messageText.textContent = 'Download';
+                downloadLink.appendChild(messageText);
+                imageElement.className = 'image';
+                openIcon.style.display = 'none';
               } else {
-                let picture = sender.file;
-                navigate('/showImage',{state: {loggedInUser, allUsers,userId,userName,picture}})
-                await markMessageAsRead(sender.id,"only");
+              imageElement.className = 'blurred-image';
+              openIcon.className = 'fas fa-eye open-icon';
+              imageContainer.appendChild(openIcon);
               }
-            });
+            }else {
+              imageElement.className = 'blurred-image';
+              openIcon.className = 'fas fa-eye open-icon';
+              imageContainer.appendChild(openIcon);
+            }
+              openIcon.addEventListener('click', async () => {
+                if(sender.file.status==false) {
+                console.log(sender.file.status);
+                imageElement.classList.remove('blurred-image');
+                openIcon.style.display = 'none';
+                await markMessageAsRead(sender.id);
+                imageContainer.className = 'fas fa-check-double read';
+                } else {
+                  let picture = sender.file;
+                  navigate('/showImage',{state: {loggedInUser, allUsers,userId,userName,picture}})
+                  await markMessageAsRead(sender.id,"only");
+                  imageContainer.className = 'fas fa-check-double read';
 
-          messageContainer.appendChild(imageContainer);
-          messageContainer.appendChild(downloadLink);
-
-
-        } else {
-          const imageElement = document.createElement('img');
-          imageElement.src = fileData;
-          imageElement.alt = fileName;
-          imageElement.className = 'image';
-          messageContainer.appendChild(imageElement);
+                }
+              });
+  
+            messageContainer.appendChild(imageContainer);
+            messageContainer.appendChild(downloadLink);
+          } else {
+            const imageElement = document.createElement('img');
+            imageElement.src = fileData;
+            imageElement.alt = fileName;
+            imageElement.className = 'image';
+            messageContainer.appendChild(imageElement);
+          }
         }
-
-      } else {
+        } else {
         const fileLink = document.createElement('a');
         fileLink.href = blobUrl;
         fileLink.download = fileName;
@@ -543,10 +559,12 @@ const ChatApp = () => {
     timestampElement.className = 'timestamp';
     timestampElement.textContent = timestamp;
     messageInfo.appendChild(timestampElement);
-    if(sender.senderId === loggedInUser.id){
-      const readStatusIcon = document.createElement('i');
-    readStatusIcon.className = sender.read ? 'fas fa-check-double read' : 'fas fa-check unread';
-    messageInfo.appendChild(readStatusIcon);
+    if (sender.senderId === loggedInUser.id) {
+      if (sender.readOnly !== true) {
+        const readStatusIcon = document.createElement('i');
+        readStatusIcon.className = sender.read ? 'fas fa-check-double read' : 'fas fa-check unread';
+        messageInfo.appendChild(readStatusIcon);
+      }
     }
     messageContainer.appendChild(messageInfo);
     messageElement.appendChild(messageContainer);
@@ -567,19 +585,6 @@ const ChatApp = () => {
       return
     }
   }
-
-  async function resolve(dataUpdate) {
-    console.log(dataUpdate);
-    let a = await axios.put(`${serverUrl}/update-message`, dataUpdate);
-    console.log(a);
-
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(
-        JSON.stringify(dataUpdate)
-      );
-    }
-  }
-
   return (
     <div className="chat-container">
       <input
